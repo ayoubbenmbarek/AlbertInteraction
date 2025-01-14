@@ -1,0 +1,5 @@
+httpx provides both synchronous and asynchronous
+TODO:
+Authorization: using credential from db
+health check api
+response.raise_for_status()  # Raise an error for non-2xx responses
