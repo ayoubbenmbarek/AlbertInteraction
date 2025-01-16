@@ -1,18 +1,19 @@
 """Routes for Core tag"""
 import os
+
+import json
 import httpx
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
-from typing import Optional
 from dotenv import load_dotenv
 from app.functions.login_function import get_albert_client
 from app.models.models import ChatRequest
 from app.services.app_services import fetch_models, fetch_model_by_id
-from app.models.models import AlbertModelResponse
+from app.models.models import AlbertModelResponse, CompletionRequest
 
 load_dotenv()
 
 
-ALBERT_API_BASE_URL = os.getenv("ALBERT_BASE_URL")
+ALBERT_API_BASE_URL = os.getenv("ALBERT_API_BASE_URL")
 
 router = APIRouter()
 
@@ -62,14 +63,12 @@ async def chat_completion(request: ChatRequest,
         _type_: _description_
     """
     try:
-        # async with httpx.AsyncClient() as client:
-        response = await client.post(f"{ALBERT_API_BASE_URL}/chat/completions",
-                                     json=request.model_dump())
-
+        response = await client.post(
+            f"{ALBERT_API_BASE_URL}/chat/completions",
+            json=request.model_dump()
+        )
         response.raise_for_status()
-
         return response.json()
-
     except httpx.RequestError as e:
         raise HTTPException(
             status_code=500,
@@ -81,6 +80,45 @@ async def chat_completion(request: ChatRequest,
             detail=f"Error response from origin API: {e.response.text}"
         ) from e
 
+
+@router.post("/completions")
+async def completions(
+    request: CompletionRequest,  # Use the Pydantic model here
+    client: httpx.AsyncClient = Depends(get_albert_client)  # Dependency injection for client
+):
+    """
+    Calls the completions endpoint with the provided parameters.
+
+    Args:
+        request (CompletionRequest): The request data.
+        client (httpx.AsyncClient): The HTTP client to make the request.
+
+    Returns:
+        dict: The response from the completions API.
+    """
+    payload = request.dict()  # Convert Pydantic model to dictionary for JSON payload
+
+    try:
+        # Send the POST request to the external completions API
+        response = await client.post(f"{ALBERT_API_BASE_URL}/completions", json=payload)
+        response.raise_for_status()
+        # response_data = response.json()
+        # text = response_data.get("choices", [{}])[0].get("text", "")
+
+        # return text
+        return response.json()
+
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Request to origin API failed: {e}"
+        ) from e
+
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"Error response from origin API: {e.response.text}"
+        ) from e
 
 @router.get("/model-details/{model_id}", tags=["Models"])
 async def get_model_details(model_id: str, client: httpx.AsyncClient = Depends(get_albert_client)):
@@ -100,7 +138,7 @@ async def get_model_details(model_id: str, client: httpx.AsyncClient = Depends(g
 
     try:
         response = await client.get(url)
-        response.raise_for_status() 
+        response.raise_for_status()
         return response.json()
     except httpx.RequestError as e:
         raise HTTPException(
@@ -112,59 +150,6 @@ async def get_model_details(model_id: str, client: httpx.AsyncClient = Depends(g
             status_code=response.status_code,
             detail=f"Error response from origin API: {e.response.text}"
         ) from e
-
-
-# @router.post("/upload")
-# async def upload_file(
-#     file: UploadFile = File(...),
-#     collection: str = Form(...),
-#     chunk_size: int = Form(512),
-#     chunk_overlap: int = Form(0),
-#     length_function: str = Form("len"),
-#     is_separator_regex: bool = Form(False),
-#     separators: Optional[str] = Form("\n\n,\n,. , "),
-#     chunk_min_size: int = Form(0),
-#     client: httpx.AsyncClient = Depends(get_albert_client)
-# ):
-#     """
-#     Upload a file to be processed, chunked, and stored into a vector database.
-#     """
-#     separators_list = separators.split(",")
-
-#     request_payload = {
-#         "collection": collection,
-#         "chunker": {
-#             "name": "LangchainRecursiveCharacterTextSplitter",
-#             "args": {
-#                 "chunk_size": chunk_size,
-#                 "chunk_overlap": chunk_overlap,
-#                 "length_function": length_function,
-#                 "is_separator_regex": is_separator_regex,
-#                 "separators": separators_list,
-#                 "chunk_min_size": chunk_min_size,
-#             },
-#         },
-#     }
-
-#     # async with httpx.AsyncClient() as client:
-#     try:
-#         response = await client.post(
-#             f"{ALBERT_API_BASE_URL}",
-#             files={"file": (file.filename, await file.read(), file.content_type)},
-#             data={"request": request_payload},
-#         )
-#         response.raise_for_status()
-#         return response.json()
-#     except httpx.RequestError as e:
-#         raise HTTPException(
-#             status_code=500,
-#             detail=f"Request to origin API failed: {e}"
-#         ) from e
-#     except httpx.HTTPStatusError as e:
-#         raise HTTPException(
-#             status_code=response.status_code,
-#             detail=f"Error response from origin API: {e.response.text}"
-#         ) from e
 
 
 @router.get("/collections")
@@ -196,7 +181,57 @@ async def get_collections(client: httpx.AsyncClient = Depends(get_albert_client)
             status_code=response.status_code,
             detail=f"Error response from origin API: {e.response.text}"
         ) from e
-    # except httpx.RequestError as exc:
-    #     raise HTTPException(status_code=500, detail=f"Request error: {exc}")
-    # except httpx.HTTPStatusError as exc:
-    #     raise HTTPException(status_code=response.status_code, detail=f"HTTP error: {exc}")
+
+
+@router.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    collection_id: str = Form(...),
+    chunk_size: int = Form(512),
+    chunk_overlap: int = Form(0),
+    length_function: str = Form("len"),
+    is_separator_regex: bool = Form(False),
+    separators: str = Form("\n\n,\n,. , "),
+    chunk_min_size: int = Form(0),
+    client: httpx.AsyncClient = Depends(get_albert_client),
+):
+    """
+    Upload a file to the external Albert API, process it, and store it into a vector database.
+    """
+    separators_list = [sep.strip() for sep in separators.split(",") if sep.strip()]
+
+    request_payload = {
+        "collection": collection_id,
+        "chunker": {
+            "name": "LangchainRecursiveCharacterTextSplitter",
+            "args": {
+                "chunk_size": chunk_size,
+                "chunk_overlap": chunk_overlap,
+                "length_function": length_function,
+                "is_separator_regex": is_separator_regex,
+                "separators": separators_list,
+                "chunk_min_size": chunk_min_size,
+            },
+        },
+    }
+
+    try:
+        response = await client.post(
+            f"{ALBERT_API_BASE_URL}/files",
+            files={
+                "file": (file.filename, await file.read(), file.content_type),
+                "request": (None, json.dumps(request_payload), "application/json"),
+            },
+        )
+        response.raise_for_status()
+        return response.json()
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Request to external API failed: {e}",
+        ) from e
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"Error response from external API: {e.response.text}",
+        ) from e

@@ -1,6 +1,8 @@
 """Represent models responses"""
-from typing import List, Optional
+from typing import List, Optional, Literal, Union
 from pydantic import BaseModel
+from uuid import UUID
+
 
 class AlbertModelResponse(BaseModel):
     """_summary_
@@ -54,7 +56,7 @@ class Message(BaseModel):
         BaseModel (_type_): _description_
     """
     content: str
-    role: str
+    role: Literal["system", "user", "assistant", "tool", "function"]
     name: str
     audio: Optional[dict] = None
     function_call: Optional[FunctionCall] = None
@@ -62,18 +64,27 @@ class Message(BaseModel):
     tool_calls: Optional[List[ToolCall]] = None
     tool_call_id: Optional[str] = None
 
+
 class SearchArgs(BaseModel):
     """_summary_
 
     Args:
         BaseModel (_type_): _description_
+
+    Raises:
+        ValueError: _description_
+
+    Returns:
+        _type_: _description_
     """
+    # collections: List[Union[UUID, Literal["internet"]]]
     collections: List[str]
     rff_k: int
     k: int
-    method: str
+    method: Literal["hybrid", "lexical", "semantic"]
     score_threshold: int
     template: str
+
 
 class ChatRequest(BaseModel):
     """_summary_
@@ -99,3 +110,32 @@ class ChatRequest(BaseModel):
     search: bool = False
     search_args: Optional[SearchArgs] = None
     additionalProp1: Optional[dict] = None
+
+
+class CompletionRequest(BaseModel):
+    """_summary_
+
+    Args:
+        BaseModel (_type_): _description_
+    """
+    prompt: str
+    model: str
+    best_of: Optional[int] = 0
+    echo: Optional[bool] = False
+    frequency_penalty: Optional[float] = 0
+    logit_bias: Optional[dict] = {
+        "additionalProp1": 0,
+        "additionalProp2": 0,
+        "additionalProp3": 0
+    }
+    logprobs: Optional[int] = 0
+    max_tokens: Optional[int] = 16
+    n: Optional[int] = 1
+    presence_penalty: Optional[float] = 0
+    seed: Optional[int] = 0
+    stop: Optional[str] = "string"
+    stream: Optional[bool] = False
+    # suffix: Optional[str] = "string"
+    temperature: Optional[float] = 1
+    top_p: Optional[float] = 1
+    user: Optional[str] = "string"
