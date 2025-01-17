@@ -1,7 +1,9 @@
 """Represent models responses"""
+from enum import Enum
 from typing import List, Optional, Literal, Union
 from pydantic import BaseModel
 from uuid import UUID
+# from googletrans import LANGUAGES
 
 
 class AlbertModelResponse(BaseModel):
@@ -30,6 +32,7 @@ class AlbertModelResponse(BaseModel):
 #     max_tokens: int = 100
 #     temperature: float = 0.7
 
+
 class FunctionCall(BaseModel):
     """_summary_
 
@@ -38,6 +41,7 @@ class FunctionCall(BaseModel):
     """
     arguments: str
     name: str
+
 
 class ToolCall(BaseModel):
     """_summary_
@@ -48,6 +52,7 @@ class ToolCall(BaseModel):
     id: str
     function: FunctionCall
     type: str
+
 
 class Message(BaseModel):
     """_summary_
@@ -139,3 +144,32 @@ class CompletionRequest(BaseModel):
     temperature: Optional[float] = 1
     top_p: Optional[float] = 1
     user: Optional[str] = "string"
+
+
+class Language(str, Enum):
+    """_summary_
+
+    Args:
+        str (_type_): _description_
+        Enum (_type_): _description_
+    """
+    english = "en"
+    french = "fr"
+    spanish = "es"
+    german = "de"
+    italian = "it"
+    # locals().update({name.replace(" ", "_"): code for code, name in LANGUAGES.items()})
+
+
+class TranscriptionRequest(BaseModel):
+    """_summary_
+
+    Args:
+        BaseModel (_type_): _description_
+    """
+    model: str = "openai/whisper-large-v3"
+    language: str
+    prompt: Optional[str] = None
+    response_format: str = "json"
+    temperature: float = 0.0
+    timestamp_granularities: Optional[List[str]] = None

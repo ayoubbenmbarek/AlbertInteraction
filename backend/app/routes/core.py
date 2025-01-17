@@ -3,22 +3,43 @@ import os
 
 import json
 import httpx
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
+from typing import Optional, List
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Body
 from dotenv import load_dotenv
+from enum import Enum
 from app.functions.login_function import get_albert_client
 from app.models.models import ChatRequest
 from app.services.app_services import fetch_models, fetch_model_by_id
-from app.models.models import AlbertModelResponse, CompletionRequest
+from app.models.models import AlbertModelResponse, CompletionRequest, Language
 
 load_dotenv()
 
 
 ALBERT_API_BASE_URL = os.getenv("ALBERT_API_BASE_URL")
+ALBERT_API_HEALTH_URL = os.getenv("ALBERT_API_HEALTH_URL")
 
 router = APIRouter()
 
 
-@router.get("/models", summary="Fetch Albert models", tags=["Models"])
+@router.get("/health", tags=["Health Check"])
+async def health_check(client: httpx.AsyncClient = Depends(get_albert_client)):
+    """
+    Check Albert Health.
+    """
+    status = {"api": "ok", "albert_api": "ok"}
+
+    try:
+        response = await client.get(ALBERT_API_HEALTH_URL, timeout=5.0)
+        print(response.status_code)
+        if response.status_code != 200:
+            status["albert_api"] = "down"
+    except Exception:
+        status["albert_api"] = "down"
+
+    return status
+
+
+@router.get("/models", summary="Get Albert models", tags=["Models"])
 async def get_albert_models(client: httpx.AsyncClient = Depends(get_albert_client)):
     """
     Endpoint to fetch the list of models from the Albert API.
@@ -83,8 +104,8 @@ async def chat_completion(request: ChatRequest,
 
 @router.post("/completions")
 async def completions(
-    request: CompletionRequest,  # Use the Pydantic model here
-    client: httpx.AsyncClient = Depends(get_albert_client)  # Dependency injection for client
+    request: CompletionRequest,
+    client: httpx.AsyncClient = Depends(get_albert_client)
 ):
     """
     Calls the completions endpoint with the provided parameters.
@@ -96,10 +117,10 @@ async def completions(
     Returns:
         dict: The response from the completions API.
     """
-    payload = request.dict()  # Convert Pydantic model to dictionary for JSON payload
+    # payload = request.dict()
+    payload = request.model_dump()
 
     try:
-        # Send the POST request to the external completions API
         response = await client.post(f"{ALBERT_API_BASE_URL}/completions", json=payload)
         response.raise_for_status()
         # response_data = response.json()
@@ -119,6 +140,7 @@ async def completions(
             status_code=response.status_code,
             detail=f"Error response from origin API: {e.response.text}"
         ) from e
+
 
 @router.get("/model-details/{model_id}", tags=["Models"])
 async def get_model_details(model_id: str, client: httpx.AsyncClient = Depends(get_albert_client)):
@@ -186,7 +208,7 @@ async def get_collections(client: httpx.AsyncClient = Depends(get_albert_client)
 @router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
-    collection_id: str = Form(...),
+    collection: str = Form(...),
     chunk_size: int = Form(512),
     chunk_overlap: int = Form(0),
     length_function: str = Form("len"),
@@ -196,12 +218,22 @@ async def upload_file(
     client: httpx.AsyncClient = Depends(get_albert_client),
 ):
     """
-    Upload a file to the external Albert API, process it, and store it into a vector database.
+    Upload a file to be processed, chunked, and stored into a vector database. Supported file types : pdf, html, json.
+
+    Supported files types:
+
+        pdf: Portable Document Format file.
+        json: JavaScript Object Notation file. For JSON,
+        file structure like a list of documents: [{"text": "hello world", "title": "my document", "metadata": {"autor": "me"}}, ...]}
+        or [{"text": "hello world", "title": "my document"}, ...]} Each document must have a "text" and "title" keys and "metadata"
+        key (optional) with dict type value.
+        html: Hypertext Markup Language file.
+        markdown: Markdown Language file.
     """
     separators_list = [sep.strip() for sep in separators.split(",") if sep.strip()]
 
     request_payload = {
-        "collection": collection_id,
+        "collection": collection,
         "chunker": {
             "name": "LangchainRecursiveCharacterTextSplitter",
             "args": {
@@ -225,6 +257,106 @@ async def upload_file(
         )
         response.raise_for_status()
         return response.json()
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Request to external API failed: {e}",
+        ) from e
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"Error response from external API: {e.response.text}",
+        ) from e
+
+
+@router.post("/transcribe/")
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    model: str = Form("openai/whisper-large-v3"),
+    language: str = Form("fr"),
+    prompt: Optional[str] = Form(""),
+    response_format: str = Form("json"),
+    temperature: float = Form(0.0),
+    timestamp_granularities: Optional[List[str]] = Form(None),
+    client: httpx.AsyncClient = Depends(get_albert_client),
+):
+    """Send an audio file for transcription"""
+
+    files = {"file": (file.filename, file.file, file.content_type)}
+    data = {
+        "model": model,
+        "language": language,
+        "prompt": prompt,
+        "response_format": response_format,
+        "temperature": str(temperature),
+    }
+
+    if timestamp_granularities:
+        for i, granularity in enumerate(timestamp_granularities):
+            data[f"timestamp_granularities[{i}]"] = granularity
+    try:
+        response = await client.post(f"{ALBERT_API_BASE_URL}/audio/transcriptions",
+                               files=files, data=data)
+        response.raise_for_status()
+        return response.json()
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Request to external API failed: {e}",
+        ) from e
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"Error response from external API: {e.response.text}",
+        ) from e
+
+from pydantic import BaseModel
+class Message(BaseModel):
+    role: str
+    content: str
+    name: Optional[str] = None  # 'name' can be optional
+    tool_call_id: Optional[str] = None
+
+class SearchArgs(BaseModel):
+    collections: List[str]
+    rff_k: int
+    k: int
+    method: str
+    score_threshold: float
+    template: str
+
+class ChatRequesty(BaseModel):
+    messages: List[Message]
+    model: str
+    stream: Optional[bool] = False
+    frequency_penalty: Optional[float] = 0
+    max_tokens: Optional[int] = 5
+    n: Optional[int] = 1
+    presence_penalty: Optional[float] = 0
+    temperature: Optional[float] = 0.7
+    top_p: Optional[float] = 1
+    user: Optional[str] = None  # Make 'user' optional
+    seed: Optional[int] = 0
+    stop: Optional[str] = None
+    best_of: Optional[int] = 0
+    top_k: Optional[int] = -1
+    min_p: Optional[float] = 0
+    search: Optional[bool] = False
+    search_args: Optional[SearchArgs] = None
+
+ALBERT_API_CHAT_URL = "https://albert.api.dev.etalab.gouv.fr/v1/chat/completions"
+
+@router.post("/chat")
+async def chat(request: ChatRequesty, client: httpx.AsyncClient = Depends(get_albert_client)):
+    try:
+        response = await client.post(ALBERT_API_CHAT_URL, json=request.dict(exclude_none=True))
+        response.raise_for_status()
+        api_response = response.json()
+        print("API Response:", api_response)  # Log the entire response here
+        assistant_message = api_response.get("choices", [{}])[0].get("message", {}).get("content", "")
+        if not assistant_message:
+            print("Assistant message is empty.")
+        return {"assistant_reply": assistant_message}
     except httpx.RequestError as e:
         raise HTTPException(
             status_code=500,
